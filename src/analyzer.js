@@ -152,6 +152,7 @@ export function analyzeLog(inputLines, options = {}) {
       time: formatTime(time),
       context: ctx,
       index,
+      clean: ev.clean,
       raw: ev.raw,
       deduped: false,
     });

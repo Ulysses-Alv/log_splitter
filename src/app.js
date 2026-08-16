@@ -368,21 +368,40 @@ function renderGroupedEvents() {
     for (const occ of occurrencesWithContext) {
       if (countShown >= state.config.maxGroup) break;
 
+      const triggerText = occ.clean || cleanLine(occ.raw) || occ.raw || grp.label;
+
       let contextHtml = '';
       if (occ.context && occ.context.length > 0) {
         contextHtml = `
-          <div class="context-box">
-            ${occ.context.map((c) => `<span class="context-line">${escapeHtml(c)}</span>`).join('')}
+          <div class="occurrence-context-section">
+            <div class="context-section-title">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              Preceding Causal Context (${occ.context.length} ${occ.context.length === 1 ? 'line' : 'lines'} before):
+            </div>
+            <div class="context-box">
+              ${occ.context.map((c) => `<span class="context-line">${escapeHtml(c)}</span>`).join('')}
+            </div>
           </div>
         `;
       } else {
-        contextHtml = `<div class="context-box"><span class="context-line context-line-muted">No preceding non-noise context lines</span></div>`;
+        contextHtml = `
+          <div class="occurrence-context-section">
+            <div class="context-box"><span class="context-line context-line-muted">No preceding non-noise context lines</span></div>
+          </div>
+        `;
       }
 
       occurrencesHtml += `
         <div class="occurrence-item">
           <div class="occurrence-header">
-            <span><strong class="time-tag">@ ${occ.time}</strong> (Line #${occ.index + 1})</span>
+            <span class="occurrence-meta">
+              <strong class="time-tag">@ ${occ.time}</strong>
+              <span class="line-badge">Line #${occ.index + 1}</span>
+            </span>
+          </div>
+          <div class="occurrence-trigger-box">
+            <span class="trigger-tag">EVENT</span>
+            <span class="trigger-text">${escapeHtml(triggerText)}</span>
           </div>
           ${contextHtml}
         </div>
