@@ -1,0 +1,8 @@
+09:00:00.000 [SceneLoader] Loaded Scene: Arena
+09:00:05.100 [Player] Player spawned
+09:00:06.200 MissingReferenceException: The object of type 'GameObject' has been destroyed but you are still trying to access it.
+09:00:10.000 IndexOutOfRangeException: Index was outside the bounds of the array.
+09:00:12.300 StackOverflowException: The requested operation caused a stack overflow.
+09:00:15.000 OutOfMemoryException: Out of memory
+09:00:18.000 [ERROR] Custom error occurred in NetworkManager
+09:00:20.000 [EXCEPTION] Fatal unhandled exception in thread pool

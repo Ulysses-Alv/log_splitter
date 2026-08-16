@@ -1,0 +1,27 @@
+Initialize engine version: 2022.3.12f1 (6a9e14a1f6a1)
+[Subsystems] Discovering subsystems at path
+GfxDevice: creating device client; threaded=1; driver=Vulkan
+14:02:10.123 [SceneLoader] Loaded Scene: MainMenu
+14:02:11.450 [UI] Initializing main menu canvas
+14:02:15.890 [UI] Play button pressed, starting campaign
+14:02:16.200 [SceneLoader] Loaded Scene: Level01_Forest
+14:02:17.100 [PlayerSpawner] Spawning player at (12.4, 0.5, -4.2)
+14:02:17.340 [EnemySpawner] Spawning 12 goblins and 2 orcs
+14:02:18.512 [WARNING] <color=yellow>[DOTween]</color> NULL target in tween callback
+14:02:19.001 [Audio] Background music track 04 started
+14:02:22.450 [AI] NavMesh agent calculated route to waypoint B
+14:02:23.110 "SetDestination" can only be called on an active agent that has been placed on a NavMesh.
+14:02:23.112 Failed to create agent because it is not close enough to the NavMesh
+14:02:24.005 [Player] Player taking damage from trap
+14:02:25.800 [Combat] Executing ultimate ability
+14:02:26.110 NullReferenceException: Object reference not set to an instance of an object.
+  at Game.Combat.AbilitySystem.CastSpell (Game.Combat.SpellData spell, UnityEngine.Vector3 targetPos) [0x00042] in <48f98a21345>:0 
+  at Game.Player.PlayerController.Update () [0x00120] in <48f98a21345>:0 
+14:02:26.120 NullReferenceException: Object reference not set to an instance of an object.
+  at Game.Combat.DamageEffect.Apply () [0x00010] in <48f98a21345>:0 
+14:02:28.900 [Physics] Explosion force applied to barrels
+14:02:29.100 Cannot throw a kinematic rigidbody without disabling isKinematic first.
+14:02:35.000 [SceneLoader] Loaded Scene: Level01_BossArena
+14:02:36.500 [Boss] Boss AI initialized
+14:02:40.200 [WARNING] Tween startup failed: target transform was destroyed
+14:02:45.000 [Session] Application quit requested

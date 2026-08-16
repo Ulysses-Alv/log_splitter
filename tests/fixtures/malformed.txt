@@ -1,0 +1,13 @@
+Some random header line with no timestamp
+Another untracked log message
+<color=#ff0000><b>Broken HTML tag with no close
+[UnknownComponent] Warning that is not a Unity warning
+99:99:99.999 Invalid timestamp hours
+11:22:33.444 [SceneLoader] Loaded Scene: CorruptScene<color=green>
+11:22:35.555 [WARNING] <color=red>NULL target in broken string</color>
+11:22:36.666 NullReferenceException: Object reference not set
+  StackTrace:
+  UnityEngine.Debug:LogError(Object)
+  (at <123456789abcdef0>:0)
+  at UnityEngine.GameObject.SendMessage()
+  at System.Action.Invoke()

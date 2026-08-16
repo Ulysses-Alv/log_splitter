@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unity Log Analyzer — In-Browser Test Suite</title>
+  <link rel="stylesheet" href="../styles/main.css">
+  <style>
+    body { padding: 2rem 1rem; }
+    .test-card {
+      background-color: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .test-pass { border-left: 4px solid var(--accent-primary); }
+    .test-fail { border-left: 4px solid var(--sev-exception-border); background-color: rgba(248, 81, 73, 0.05); }
+    .test-name { font-weight: 600; font-size: 0.95rem; }
+    .test-error { font-family: var(--font-mono); font-size: 0.8rem; color: var(--sev-exception-text); margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div style="max-width: 900px; margin: 0 auto;">
+    <header style="margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 700;">In-Browser Test Runner</h1>
+        <p style="color: var(--text-secondary); font-size: 0.85rem;">Client-side automated unit & parity verification</p>
+      </div>
+      <a href="../index.html" class="btn btn-sm btn-primary">← Back to App</a>
+    </header>
+
+    <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+      <div class="kpi-card" style="flex: 1;">
+        <div class="kpi-title">Tests Run</div>
+        <div id="statTotal" class="kpi-value">0</div>
+      </div>
+      <div class="kpi-card" style="flex: 1;">
+        <div class="kpi-title">Passed</div>
+        <div id="statPassed" class="kpi-value" style="color: #7ee787;">0</div>
+      </div>
+      <div class="kpi-card" style="flex: 1;">
+        <div class="kpi-title">Failed</div>
+        <div id="statFailed" class="kpi-value" style="color: var(--sev-exception-text);">0</div>
+      </div>
+    </div>
+
+    <div id="testResults"></div>
+  </div>
+
+  <script type="module">
+    import { parseTime, cleanLine, isNoise, matchEvent, splitLines, timeDeltaSeconds } from '../src/parser.js';
+    import { analyzeLog } from '../src/analyzer.js';
+    import { splitLogEvents } from '../src/splitter.js';
+    import { renderMarkdown } from '../src/markdown.js';
+    import { SAMPLE_LOGS } from '../src/samples.js';
+
+    const resultsContainer = document.getElementById('testResults');
+    const statTotal = document.getElementById('statTotal');
+    const statPassed = document.getElementById('statPassed');
+    const statFailed = document.getElementById('statFailed');
+
+    let total = 0, passed = 0, failed = 0;
+
+    function assert(condition, message) {
+      if (!condition) throw new Error(message || 'Assertion failed');
+    }
+
+    function assertEqual(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error(`${message ? message + ': ' : ''}Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+      }
+    }
+
+    async function runTest(name, fn) {
+      total++;
+      const card = document.createElement('div');
+      card.className = 'test-card';
+
+      try {
+        await fn();
+        passed++;
+        card.classList.add('test-pass');
+        card.innerHTML = `
+          <div>
+            <div class="test-name">✓ ${name}</div>
+          </div>
+          <span class="badge" style="color: #7ee787; border-color: #238636;">PASS</span>
+        `;
+      } catch (err) {
+        failed++;
+        card.classList.add('test-fail');
+        card.innerHTML = `
+          <div>
+            <div class="test-name">✗ ${name}</div>
+            <div class="test-error">${err.message}</div>
+          </div>
+          <span class="badge" style="color: var(--sev-exception-text); border-color: var(--sev-exception-border);">FAIL</span>
+        `;
+      }
+
+      resultsContainer.appendChild(card);
+      statTotal.textContent = total;
+      statPassed.textContent = passed;
+      statFailed.textContent = failed;
+    }
+
+    // Run tests
+    (async () => {
+      await runTest('Parser: valid timestamp parsing', () => {
+        const t = parseTime('14:02:10.123 [SceneLoader] Loaded Scene: MainMenu');
+        assertEqual(t.hours, 14);
+        assertEqual(t.minutes, 2);
+        assertEqual(t.seconds, 10);
+        assertEqual(t.timeStr, '14:02:10');
+      });
+
+      await runTest('Parser: invalid timestamp handling', () => {
+        assertEqual(parseTime(''), null);
+        assertEqual(parseTime('Invalid timestamp'), null);
+        assertEqual(parseTime('99:99:99.999'), null);
+      });
+
+      await runTest('Parser: HTML tag & timestamp stripping', () => {
+        const cleaned = cleanLine('14:02:18.512 [WARNING] <color=yellow>[DOTween]</color> <b>NULL target</b>');
+        assertEqual(cleaned, '[WARNING] [DOTween] NULL target');
+      });
+
+      await runTest('Parser: Noise pattern detection', () => {
+        assert(isNoise('StackTrace:'));
+        assert(isNoise('  at UnityEngine.GameObject.SendMessage ()'));
+        assert(!isNoise('14:02:10.123 [Player] Player spawned'));
+      });
+
+      await runTest('Parser: Pattern & Severity matching', () => {
+        const match = matchEvent('NullReferenceException: Object reference not set');
+        assertEqual(match.severity, 'EXCEPTION');
+        assertEqual(match.category, 'NullRef');
+      });
+
+      await runTest('Analyzer: Standard sample gameplay cascade', () => {
+        const res = analyzeLog(SAMPLE_LOGS.standard.content);
+        assertEqual(res.session.exceptions, 2);
+        assertEqual(res.session.errors, 3);
+        assertEqual(res.session.warnings, 2);
+        assertEqual(res.session.scenes, 3);
+      });
+
+      await runTest('Analyzer: Clean session with zero errors', () => {
+        const res = analyzeLog(SAMPLE_LOGS.clean.content);
+        assertEqual(res.session.exceptions, 0);
+        assertEqual(res.session.errors, 0);
+        assertEqual(res.session.warnings, 0);
+        assertEqual(res.session.scenes, 4);
+      });
+
+      await runTest('Analyzer: Rapid burst clustering', () => {
+        const res = analyzeLog(SAMPLE_LOGS.rapidBursts.content, { windowSec: 10 });
+        assertEqual(res.groups.NullRef.count, 10);
+        const distinct = res.groups.NullRef.occurrences.filter(o => !o.deduped);
+        assertEqual(distinct.length, 1);
+      });
+
+      await runTest('Splitter: Time-window slicing extraction', () => {
+        const split = splitLogEvents(SAMPLE_LOGS.standard.content);
+        assert(split.events.length > 0);
+        assert(split.events[0].content.includes('EVENT #01'));
+      });
+
+      await runTest('Markdown: Renders full AI markdown report', () => {
+        const res = analyzeLog(SAMPLE_LOGS.standard.content);
+        const md = renderMarkdown('standard.txt', res.session, res.sceneEvents, res.groups, res.timeline);
+        assert(md.includes('# Unity Log Analysis — `standard.txt`'));
+        assert(md.includes('## Session Overview'));
+        assert(md.includes('## Suggested Prompt'));
+      });
+    })();
+  </script>
+</body>
+</html>

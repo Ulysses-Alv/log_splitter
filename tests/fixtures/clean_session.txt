@@ -1,0 +1,11 @@
+Initialize engine version: 2022.3.12f1
+08:00:00.000 [SceneLoader] Loaded Scene: Bootstrapper
+08:00:02.150 [ServiceLocator] Initialized 14 core services
+08:00:03.000 [SceneLoader] Loaded Scene: MainMenu
+08:00:10.500 [SaveManager] Loaded profile: PlayerOne
+08:00:15.000 [SceneLoader] Loaded Scene: Level_Tutorial
+08:00:25.000 [Tutorial] Step 1 completed: Move with WASD
+08:00:35.000 [Tutorial] Step 2 completed: Jump over obstacle
+08:00:50.000 [SceneLoader] Loaded Scene: Level_01
+08:01:20.000 [GameSession] Victory reached in 30.0s
+08:01:25.000 [Session] Application exiting cleanly
