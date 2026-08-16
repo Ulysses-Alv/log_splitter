@@ -1,0 +1,22 @@
+{
+  "name": "unity-log-analyzer",
+  "version": "1.0.0",
+  "description": "Static client-side Unity log analyzer and AI prompt generator",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/unit_tests.mjs",
+    "test:parity": "node tests/compare_with_python.mjs",
+    "test:all": "node --test tests/unit_tests.mjs && node tests/compare_with_python.mjs"
+  },
+  "keywords": [
+    "unity",
+    "log",
+    "analyzer",
+    "static",
+    "client-side",
+    "ai",
+    "prompt"
+  ],
+  "author": "",
+  "license": "MIT"
+}
