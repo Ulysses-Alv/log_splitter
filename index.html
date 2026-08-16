@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unity Log Analyzer — Local & AI-Optimized</title>
+  <meta name="description" content="A static, zero-backend, client-side Unity log parser and analyzer. Extracts root causes, causal context, scene timelines, and AI-ready Markdown.">
+  <meta name="theme-color" content="#0d1117">
+  <link rel="stylesheet" href="./styles/main.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Application Header -->
+    <header class="app-header">
+      <div class="logo-group">
+        <div class="logo-icon">⚡</div>
+        <div class="logo-text">
+          <h1>Unity Log Analyzer</h1>
+          <div class="subtitle">Client-Side Static Analysis & AI Prompt Compressor</div>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-privacy">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          100% Client-Side
+        </span>
+        <span class="badge">Zero Network Traffic</span>
+        <span class="badge">GitHub Pages Ready</span>
+      </div>
+    </header>
+
+    <!-- Ingestion Section -->
+    <section id="ingestionSection" class="ingestion-section">
+      <div id="dropzone" class="dropzone-card">
+        <input type="file" id="fileInput" accept=".txt,.log,text/plain" aria-label="Upload Unity Log">
+        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <div class="dropzone-title">Drag and drop your Unity log here</div>
+        <div class="dropzone-desc">
+          Drop any Unity Player.log, editor log, or console output file. Parsing and causal context analysis are performed entirely in your browser.
+        </div>
+        <div class="dropzone-actions">
+          <button type="button" id="btnSelectFile" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+            Select Log File (.txt, .log)
+          </button>
+        </div>
+      </div>
+
+      <!-- Built-in Samples Quick Bar -->
+      <div class="samples-bar">
+        <div class="samples-label">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          Quick Demo Presets:
+        </div>
+        <div class="samples-btns">
+          <button type="button" class="btn btn-sm" data-sample="standard">🎮 Gameplay Crash Cascade</button>
+          <button type="button" class="btn btn-sm" data-sample="warnings">⚠️ Tween & Target Warnings</button>
+          <button type="button" class="btn btn-sm" data-sample="rapidBursts">🔥 60 FPS Rapid NullRef</button>
+          <button type="button" class="btn btn-sm" data-sample="clean">✨ Clean Session</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Processing Progress State -->
+    <div id="processingCard" class="processing-card">
+      <div style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary);">Analyzing Log...</div>
+      <div class="progress-bar-container">
+        <div id="progressBarFill" class="progress-bar-fill"></div>
+      </div>
+      <div id="processingStage" class="processing-stage">Initializing analysis...</div>
+    </div>
+
+    <!-- Results Section -->
+    <section id="resultsSection" class="results-section">
+      
+      <!-- Toolbar Header -->
+      <div class="results-toolbar">
+        <div class="file-info">
+          <div class="file-info-icon">📄</div>
+          <div class="file-info-details">
+            <h2 id="kpiFileName">session.txt</h2>
+            <span id="kpiFileSize">0 B • 0 lines</span>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" id="btnCopyMarkdown" class="btn btn-primary" title="Copy AI-optimized prompt and summary to clipboard">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            Copy AI Prompt
+          </button>
+          <button type="button" id="btnDownloadMarkdown" class="btn" title="Download analysis.md">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            analysis.md
+          </button>
+          <button type="button" id="btnDownloadSplitSummary" class="btn" title="Download summary.txt">
+            summary.txt
+          </button>
+          <button type="button" id="btnReset" class="btn" title="Analyze another log">
+            🔄 New Log
+          </button>
+        </div>
+      </div>
+
+      <!-- KPI Summary Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-title">Time Range</div>
+          <div id="kpiTimeRange" class="kpi-value" style="font-size: 1.25rem;">--:--:--</div>
+          <div class="kpi-sub">Session Duration</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Total Lines</div>
+          <div id="kpiLines" class="kpi-value">0</div>
+          <div class="kpi-sub">Parsed Lines</div>
+        </div>
+        <div class="kpi-card kpi-exceptions">
+          <div class="kpi-title">Exceptions</div>
+          <div id="kpiExceptions" class="kpi-value" style="color: var(--sev-exception-text);">0</div>
+          <div class="kpi-sub">Critical Crashes</div>
+        </div>
+        <div class="kpi-card kpi-errors">
+          <div class="kpi-title">Errors</div>
+          <div id="kpiErrors" class="kpi-value" style="color: var(--sev-error-text);">0</div>
+          <div class="kpi-sub">NavMesh & Physics</div>
+        </div>
+        <div class="kpi-card kpi-warnings">
+          <div class="kpi-title">Warnings</div>
+          <div id="kpiWarnings" class="kpi-value" style="color: var(--sev-warning-text);">0</div>
+          <div class="kpi-sub">Tweens & Nulls</div>
+        </div>
+        <div class="kpi-card kpi-scenes">
+          <div class="kpi-title">Scenes</div>
+          <div id="kpiScenes" class="kpi-value" style="color: var(--sev-scene-text);">0</div>
+          <div class="kpi-sub">Scene Transitions</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">AI Token Saved</div>
+          <div id="kpiCompression" class="kpi-value" style="color: #7ee787;">0%</div>
+          <div class="kpi-sub">Size Reduction</div>
+        </div>
+      </div>
+
+      <!-- Config & Parameters Bar -->
+      <div class="config-bar">
+        <div class="config-inputs">
+          <div class="config-item">
+            <label for="inputContextLines">Causal Context:</label>
+            <input type="number" id="inputContextLines" value="3" min="1" max="15" title="Preceding non-noise log lines before each error">
+            <span>lines</span>
+          </div>
+          <div class="config-item">
+            <label for="inputWindowSec">Clustering Window:</label>
+            <input type="number" id="inputWindowSec" value="10" min="1" max="60" title="Deduplication window in seconds for rapid repeating errors">
+            <span>sec</span>
+          </div>
+          <div class="config-item">
+            <label for="inputMaxGroup">Max Examples:</label>
+            <input type="number" id="inputMaxGroup" value="5" min="1" max="20" title="Max representative context instances per group">
+            <span>per group</span>
+          </div>
+        </div>
+        <button type="button" id="btnApplyConfig" class="btn btn-sm btn-accent">
+          Apply Parameters
+        </button>
+      </div>
+
+      <!-- Tab Navigation -->
+      <nav class="tabs-nav" aria-label="Analysis Views">
+        <button type="button" class="tab-btn active" data-tab="groups">
+          <span>💥 Critical Events</span>
+          <span id="tabBadgeGroups" class="tab-badge">0</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="timeline">
+          <span>⏱️ Scene & Event Timeline</span>
+          <span id="tabBadgeTimeline" class="tab-badge">0</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="split">
+          <span>✂️ Time-Window Slices</span>
+          <span id="tabBadgeSplit" class="tab-badge">0</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="markdown">
+          <span>🤖 AI Analysis Markdown</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="raw">
+          <span>📜 Raw Log Viewer</span>
+        </button>
+      </nav>
+
+      <!-- Tab Panes -->
+      <!-- Tab 1: Grouped Events -->
+      <div id="tab-groups" class="tab-pane active">
+        <div id="groupsContainer" style="display: flex; flex-direction: column; gap: 1.25rem;"></div>
+      </div>
+
+      <!-- Tab 2: Timeline -->
+      <div id="tab-timeline" class="tab-pane">
+        <div class="timeline-container">
+          <div class="timeline-filter-bar">
+            <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Filter Timeline:</span>
+            <button type="button" class="timeline-filter-btn active" data-filter="ALL">All Events</button>
+            <button type="button" class="timeline-filter-btn" data-filter="EXCEPTION">🔴 Exceptions</button>
+            <button type="button" class="timeline-filter-btn" data-filter="ERROR">🟠 Errors</button>
+            <button type="button" class="timeline-filter-btn" data-filter="WARNING">🟡 Warnings</button>
+            <button type="button" class="timeline-filter-btn" data-filter="SceneLoad">🗺️ Scene Loads</button>
+          </div>
+          <div id="timelineContainer"></div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Split View -->
+      <div id="tab-split" class="tab-pane">
+        <div class="split-grid">
+          <div id="splitSidebar" class="split-sidebar"></div>
+          <div class="split-preview">
+            <div class="split-preview-header">
+              <span id="splitPreviewTitle" class="split-preview-title">Select an event slice</span>
+              <div style="display: flex; gap: 0.5rem;">
+                <button type="button" id="btnCopySplitSlice" class="btn btn-sm">Copy Slice</button>
+                <button type="button" id="btnDownloadSplitSlice" class="btn btn-sm btn-primary">Download .txt</button>
+              </div>
+            </div>
+            <pre id="splitPreviewCode" class="split-preview-code"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 4: Markdown View -->
+      <div id="tab-markdown" class="tab-pane">
+        <div class="markdown-view-container">
+          <div class="markdown-view-header">
+            <span style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">Formatted Markdown & AI Prompt Context</span>
+            <button type="button" id="btnCopyMarkdownTab" class="btn btn-sm btn-primary">Copy to Clipboard</button>
+          </div>
+          <pre id="markdownCodeArea" class="markdown-code-area"></pre>
+        </div>
+      </div>
+
+      <!-- Tab 5: Raw Log Inspector -->
+      <div id="tab-raw" class="tab-pane">
+        <div class="raw-log-container">
+          <div class="raw-log-toolbar">
+            <input type="text" id="rawLogSearch" class="search-input" placeholder="Filter raw lines (e.g. NavMesh, NullRef)...">
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Indexed line view</span>
+          </div>
+          <div id="rawLogViewer" class="raw-log-viewer"></div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2ea043" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      <span id="toastMessage">Copied to clipboard</span>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Unity Log Analyzer • Zero-backend Static Tool • Runs locally via your browser engine</p>
+    </footer>
+
+  </div>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
