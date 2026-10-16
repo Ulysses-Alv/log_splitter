@@ -55,13 +55,16 @@ for (const [filename, pyData] of Object.entries(pythonResults)) {
     assert.equal(jsGroup.severity, pyGroup.severity, `${filename}: group ${cat} severity mismatch`);
     assert.equal(jsGroup.label, pyGroup.label, `${filename}: group ${cat} label mismatch`);
     assert.equal(jsGroup.count, pyGroup.occurrences_count, `${filename}: group ${cat} occurrences mismatch`);
+    for (const field of ['scene', 'originalSeverity', 'eventType', 'representativeStack', 'occurrences']) {
+      assert.deepEqual(jsGroup[field], pyGroup[field], `${filename}: group ${cat} ${field} mismatch`);
+    }
   }
 
   // 4. Verify Timeline Count
   assert.equal(jsRes.timeline.length, pyData.timeline_count, `${filename}: timeline count mismatch`);
 
-  console.log(`✓ ${filename}: 100% parity with Python`);
+  console.log(`✓ ${filename}: metrics, grouping and diagnostic evidence match Python`);
   testedCount++;
 }
 
-console.log(`\n🎉 All ${testedCount} fixtures match Python reference output perfectly!`);
+console.log(`\nAll ${testedCount} fixtures match Python metrics and evidence.`);

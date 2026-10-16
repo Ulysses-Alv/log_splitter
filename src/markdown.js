@@ -1,7 +1,7 @@
 /**
  * @file markdown.js
  * Renders structured log analysis results into AI-optimized Markdown
- * identical to log_compressor.py output structure.
+ * aligned with log_compressor.py diagnostic evidence and report structure.
  */
 
 import { SEVERITY_LEVELS, SEVERITY_ICONS } from './constants.js';
@@ -84,18 +84,30 @@ export function renderMarkdown(filename, session, sceneEvents, groups, timeline,
 
     W(`### ${icon} ${label} — ${plural(count, 'occurrence')}`);
     W('');
-    W(`**Category:** \`${cat}\` | **Severity:** \`${sev}\` | **When:** ${timeRange}`);
+    W(`**Category:** \`${info.category || cat}\` | **Severity:** \`${sev}\` | **When:** ${timeRange}`);
+    W(`**Scene:** ${info.scene} | **Original severity:** \`${info.originalSeverity}\` | **Type:** \`${info.eventType}\``);
+    W('');
+    if (info.representativeStack?.length) {
+      W('**Representative stack trace** (complete captured frame block, not proof of an unhandled exception):');
+      W('````');
+      info.representativeStack.forEach(W);
+      W('````');
+    }
     W('');
 
     let shown = 0;
     for (const o of occ) {
-      if (!o.time) {
+      if (!o.detailed) {
         continue; // deduplicated, no context stored
       }
       if (shown >= maxGroup) {
         W(`_...and ${count - shown} more occurrences (omitted for brevity)_`);
         break;
       }
+      W(`**Event** (\`${o.time}\`, line ${o.index + 1}):`);
+      W('````');
+      W(o.raw || o.clean);
+      W('````');
       if (o.context && o.context.length > 0) {
         W(`**Context before** (\`${o.time}\`):`);
         W('```');
@@ -106,12 +118,16 @@ export function renderMarkdown(filename, session, sceneEvents, groups, timeline,
       } else {
         W(`- \`${o.time}\` _(no distinct context lines)_`);
       }
+      if (o.contextAfter?.length) {
+        W('**Context after** (temporal proximity, not proven causality):');
+        W('````');
+        o.contextAfter.forEach(W);
+        W('````');
+      }
       shown++;
     }
 
-    if (shown === 0) {
-      W(`_All ${count} occurrences were rapid repeats within the deduplication window._`);
-    }
+    if (count > shown) W(`_${count - shown} occurrences not expanded; totals and first/last times include repeats._`);
 
     W('');
   }
@@ -119,12 +135,12 @@ export function renderMarkdown(filename, session, sceneEvents, groups, timeline,
   // ── Timeline ──
   W('## Event Timeline');
   W('');
-  W('_One entry per scene load + first occurrence of each error type per minute._');
+  W('_Scene loads plus distinct message/scene/type groups per clustering window and minute._');
   W('');
 
   for (const item of timeline || []) {
     const icon = SEVERITY_ICONS[item.severity] || '⚪';
-    W(`- \`${item.time}\` ${icon} **${item.label}** — ${item.clean}`);
+    W(`- \`${item.time}\` ${icon} [${item.scene}] **${item.label}** — ${item.clean}`);
   }
 
   W('');
@@ -138,7 +154,8 @@ export function renderMarkdown(filename, session, sceneEvents, groups, timeline,
   W('');
   W('```');
   W('The following is a compressed Unity runtime log from a game session.');
-  W('Repeated events are grouped. Context lines show what happened just before each error.');
+  W('Events are grouped by scene, normalized message, category, severity and event type.');
+  W('Context is temporal evidence, not proof of causality. Exception records do not prove an unhandled exception.');
   W('');
   W('Please:');
   W('1. Identify the most likely root causes for the critical errors.');

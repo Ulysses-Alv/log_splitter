@@ -360,7 +360,7 @@ function renderGroupedEvents() {
     const lastTs = timesWithData.length > 0 ? timesWithData[timesWithData.length - 1].time : 'N/A';
     const timeRange = firstTs === lastTs ? firstTs : `${firstTs} → ${lastTs}`;
 
-    const occurrencesWithContext = grp.occurrences.filter((o) => !o.deduped);
+    const occurrencesWithContext = grp.occurrences.filter((o) => o.detailed);
     const dedupedCount = grp.occurrences.filter((o) => o.deduped).length;
 
     let occurrencesHtml = '';
@@ -376,7 +376,7 @@ function renderGroupedEvents() {
           <div class="occurrence-context-section">
             <div class="context-section-title">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
-              Preceding Causal Context (${occ.context.length} ${occ.context.length === 1 ? 'line' : 'lines'} before):
+              Context before — temporal proximity (${occ.context.length} ${occ.context.length === 1 ? 'line' : 'lines'}):
             </div>
             <div class="context-box">
               ${occ.context.map((c) => `<span class="context-line">${escapeHtml(c)}</span>`).join('')}
@@ -404,6 +404,7 @@ function renderGroupedEvents() {
             <span class="trigger-text">${escapeHtml(triggerText)}</span>
           </div>
           ${contextHtml}
+          ${occ.contextAfter?.length ? `<div class="context-section-title">Context after (not proven causality)</div><div class="context-box">${occ.contextAfter.map((c) => `<span class="context-line">${escapeHtml(c)}</span>`).join('')}</div>` : ''}
         </div>
       `;
       countShown++;
@@ -425,11 +426,14 @@ function renderGroupedEvents() {
         </div>
         <div class="group-meta">
           <span>Category: <code>${grp.category}</code></span>
+          <span>Scene: <code>${escapeHtml(grp.scene)}</code></span>
+          <span>Original severity: <code>${grp.originalSeverity}</code> · ${grp.eventType}</span>
           <span>When: <code>${timeRange}</code></span>
           <span class="badge" style="font-weight: 700;">${grp.occurrences.length} ${grp.occurrences.length === 1 ? 'occurrence' : 'occurrences'}</span>
         </div>
       </div>
       <div class="group-body">
+        ${grp.representativeStack?.length ? `<details><summary>Representative stack trace (complete captured block)</summary><pre class="context-box">${escapeHtml(grp.representativeStack.join('\n'))}</pre></details>` : ''}
         ${occurrencesHtml}
       </div>
     `;

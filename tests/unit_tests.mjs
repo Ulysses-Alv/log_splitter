@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 
 import {
   parseTime,
@@ -145,7 +146,7 @@ test('Analyzer: processes valid_session fixture with accurate metrics', () => {
   assert.equal(res.session.logs, 3); // 3 SceneLoads
 
   // Check causal context for NullReferenceException
-  const nullRefGroup = res.groups.NullRef;
+  const nullRefGroup = Object.values(res.groups).find((g) => g.category === 'NullRef');
   assert.notEqual(nullRefGroup, undefined);
   assert.equal(nullRefGroup.severity, 'EXCEPTION');
   assert.equal(nullRefGroup.count, 2);
@@ -186,7 +187,7 @@ test('Analyzer: clusters rapid repeating errors within window (rapid_bursts fixt
   const text = readFixture('rapid_bursts.txt');
   const res = analyzeLog(text, { windowSec: 10 });
 
-  const nullRefGroup = res.groups.NullRef;
+  const nullRefGroup = Object.values(res.groups).find((g) => g.category === 'NullRef');
   assert.notEqual(nullRefGroup, undefined);
   // Total occurrences counted = 6 in first burst + 2 in second burst = 8 total
   assert.equal(nullRefGroup.count, 8);
@@ -264,4 +265,97 @@ test('Markdown: renders full AI-optimized markdown report matching spec', () => 
   assert.ok(md.includes('## Critical Events (Grouped)'));
   assert.ok(md.includes('## Event Timeline'));
   assert.ok(md.includes('## Suggested Prompt'));
+});
+
+test('Diagnostics: group by message, scene, severity and type without losing totals', () => {
+  const res = analyzeLog(readFixture('diagnostic_evidence.txt'));
+  const groups = Object.values(res.groups);
+  const ragdolls = groups.filter((g) => g.label.includes('Ragdoll'));
+  assert.equal(ragdolls.length, 2);
+  assert.equal(ragdolls.find((g) => g.scene === 'Lab').count, 2);
+  assert.equal(ragdolls.find((g) => g.scene === 'Lab').occurrences.at(-1).time, '10:00:06');
+  assert.equal(groups.filter((g) => g.label.includes('Kinematic')).length, 1);
+  const nav = groups.filter((g) => g.category === 'NavMesh');
+  assert.deepEqual(nav.map((g) => g.originalSeverity), ['WARNING', 'ERROR']);
+  assert.equal(res.session.exceptions, 1);
+  assert.equal(res.session.errors, 2);
+  assert.equal(res.session.warnings, 5);
+  const leaderboard = groups.find((g) => g.label.includes('Leaderboard'));
+  assert.equal(leaderboard.eventType, 'logged-error');
+  assert.equal(leaderboard.category, 'NullRef');
+});
+
+test('Diagnostics: preserve complete stack frames independently of noise filtering', () => {
+  const res = analyzeLog(readFixture('diagnostic_evidence.txt'));
+  const group = Object.values(res.groups).find((g) => g.eventType === 'exception-record');
+  assert.equal(group.representativeStack.length, 3);
+  assert.ok(group.representativeStack[0].includes('AoESphere.cs:42'));
+  assert.ok(group.representativeStack[0].includes('Func`1'));
+  const occ = group.occurrences[0];
+  assert.ok(occ.context.some((s) => s.includes('callback queued')));
+  assert.ok(occ.contextAfter.some((s) => s.includes('Effect cancelled')));
+  const md = renderMarkdown('sample.txt', res.session, res.sceneEvents, res.groups, res.timeline);
+  for (const text of ['Representative stack trace', 'AoESphere.cs:42', '**Context after**', '**Original severity:**', '**Event**', '**Scene:** Lab']) {
+    assert.ok(md.includes(text), text);
+  }
+});
+
+test('Diagnostics: captured exception text is not classified as an unhandled exception', () => {
+  for (const message of ['[ERROR] Caught NullReferenceException: bad target', 'Leaderboard error: Object reference not set']) {
+    const res = analyzeLog(message);
+    assert.equal(res.session.exceptions, 0);
+    assert.equal(res.session.errors, 1);
+    assert.equal(res.rawEvents[0].eventType, 'logged-error');
+  }
+  assert.equal(analyzeLog('Failed to create agent').rawEvents[0].originalSeverity, 'UNKNOWN');
+});
+
+test('Diagnostics: a useful stack on a rapid repeat is retained and does not absorb next event', () => {
+  const res = analyzeLog('10:00:00.000 NullReferenceException: missing\n10:00:01.000 NullReferenceException: missing\n  at Game.Unit.Run ()\n10:00:02.000 [WARNING] another event');
+  const group = Object.values(res.groups).find((g) => g.category === 'NullRef');
+  assert.equal(group.count, 2);
+  assert.equal(group.occurrences[1].deduped, true);
+  assert.deepEqual(group.representativeStack, ['  at Game.Unit.Run ()']);
+  assert.equal(res.session.warnings, 1);
+});
+
+test('Diagnostics: bounded details preserve repeat timestamps across midnight and maxGroup=0', () => {
+  const text = '23:59:59.000 [WARNING] duplicate\n00:00:01.000 [WARNING] duplicate';
+  const res = analyzeLog(text, { maxGroup: 0 });
+  const group = Object.values(res.groups)[0];
+  assert.equal(group.count, 2);
+  assert.equal(group.occurrences[1].deduped, true);
+  assert.equal(group.occurrences[1].time, '00:00:01');
+  assert.equal(group.detailedCount, 0);
+  assert.equal(res.session.warnings, 2);
+});
+
+test('Worker: end-to-end analysis, Markdown and slices preserve diagnostic evidence', { timeout: 10000 }, async () => {
+  const workerUrl = new URL('../src/worker.js', import.meta.url).href;
+  const worker = new Worker(`
+    const { parentPort } = require('node:worker_threads');
+    global.self = { postMessage: (message) => parentPort.postMessage(message) };
+    import(${JSON.stringify(workerUrl)}).then(() => {
+      parentPort.on('message', (data) => self.onmessage({ data }));
+    });
+  `, { eval: true });
+  try {
+    const result = new Promise((resolve, reject) => {
+      worker.on('error', reject);
+      worker.on('message', (message) => {
+        if (message.type === 'ERROR') reject(new Error(message.payload.message));
+        if (message.type === 'RESULT') resolve(message.payload);
+      });
+    });
+    worker.postMessage({ type: 'ANALYZE_ALL', payload: {
+      text: readFixture('diagnostic_evidence.txt'), filename: 'diagnostic_evidence.txt', options: { maxGroup: 1 },
+    } });
+    const payload = await result;
+    assert.equal(payload.analysis.session.exceptions, 1);
+    assert.ok(payload.markdown.includes('AoESphere.cs:42'));
+    assert.ok(payload.markdown.includes('**Original severity:** `WARNING`'));
+    assert.ok(payload.splitResult.events.length > 0);
+  } finally {
+    await worker.terminate();
+  }
 });

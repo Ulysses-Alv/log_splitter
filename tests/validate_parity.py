@@ -43,11 +43,24 @@ def test_all_fixtures():
         # Convert groups to serializable
         clean_groups = {}
         for cat, data in groups.items():
+            assert f"**Original severity:** `{data['originalSeverity']}`" in md
+            for frame in data['representativeStack']:
+                assert frame in md, f'{fixture.name}: missing representative stack frame'
+            for occurrence in data['occurrences']:
+                if occurrence['detailed']:
+                    assert occurrence['raw'] in md, f'{fixture.name}: missing trigger'
+                    for context in occurrence['contextAfter']:
+                        assert context in md, f'{fixture.name}: missing following context'
             clean_groups[cat] = {
                 'severity': data['severity'],
                 'label': data['label'],
                 'occurrences_count': len(data['occurrences']),
-                'first_context': data['occurrences'][0][1] if data['occurrences'] else [],
+                'originalSeverity': data['originalSeverity'],
+                'eventType': data['eventType'],
+                'scene': data['scene'],
+                'representativeStack': data['representativeStack'],
+                'occurrences': data['occurrences'],
+                'first_context': data['occurrences'][0]['context'] if data['occurrences'] else [],
             }
 
         results[fixture.name] = {

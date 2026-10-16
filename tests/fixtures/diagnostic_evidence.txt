@@ -1,0 +1,15 @@
+10:00:00.000 [SceneLoader] Loaded Scene: Lab
+10:00:01.000 [WARNING] Failed to create agent because there is no valid NavMesh
+10:00:02.000 [ERROR] Leaderboard error: Object reference not set to an instance of an object.
+10:00:03.000 [Combat] AoE callback queued
+10:00:04.000 [EXCEPTION] NullReferenceException: Object reference not set to an instance of an object.
+  at Game.AoESphere.TriggerEventAoE (System.Func`1 callback) (at Assets/AoESphere.cs:42)
+  at UnityEngine.Events.UnityEvent.Invoke ()
+UnityEngine.Debug:LogException (System.Exception)
+10:00:05.000 [Combat] Effect cancelled
+10:00:06.000 [WARNING] [CharacterPhysics] Applying Same State: Ragdoll instanceId=123
+10:00:06.500 [WARNING] [CharacterPhysics] Applying Same State: Ragdoll instanceId=456
+10:00:07.000 [WARNING] [CharacterPhysics] Applying Same State: Kinematic
+10:00:08.000 [SceneLoader] Loaded Scene: Boss
+10:00:09.000 [WARNING] [CharacterPhysics] Applying Same State: Ragdoll instanceId=789
+10:00:10.000 [ERROR] Failed to create agent because there is no valid NavMesh

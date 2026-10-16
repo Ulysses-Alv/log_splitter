@@ -1,7 +1,7 @@
 /**
  * @file analyzer.js
  * Core analysis engine implementing the 5-pass Unity log analysis algorithm
- * faithful to log_compressor.py with full event grouping, causal context extraction,
+ * aligned with log_compressor.py with evidence-preserving grouping and temporal context,
  * session summary metrics, and timeline aggregation.
  */
 
@@ -9,7 +9,6 @@ import {
   DEFAULT_CONTEXT_LINES,
   DEFAULT_MAX_GROUP,
   DEFAULT_WINDOW_SEC,
-  SEVERITY_LEVELS,
 } from './constants.js';
 
 import {
@@ -20,6 +19,7 @@ import {
   splitLines,
   formatTime,
   timeDeltaSeconds,
+  originalSeverity, normalizeMessage, eventType, isStackFrame,
 } from './parser.js';
 
 /**
@@ -27,7 +27,7 @@ import {
  * 
  * @param {string[]|string} inputLines - Raw text or array of string lines
  * @param {object} [options]
- * @param {number} [options.contextLines=3] - Lines of causal context before each error
+ * @param {number} [options.contextLines=3] - Raw lines of context before/after each event
  * @param {number} [options.maxGroup=5] - Max representative lines shown per group
  * @param {number} [options.windowSec=10] - Seconds to cluster rapid repeated events
  * @returns {object} Analysis result
@@ -58,107 +58,73 @@ export function analyzeLog(inputLines, options = {}) {
     });
   }
 
-  // --- Pass 2: Collect events ---
-  // Array of { index, time, severity, category, label, clean, raw }
+  // Parse event boundaries before collecting evidence. Stack frames never become events.
+  for (const item of parsed) {
+    item.frame = isStackFrame(item.raw);
+    item.match = !item.frame && !isNoise(item.raw) ? matchEvent(item.raw) : null;
+  }
   const rawEvents = [];
   const sceneEvents = [];
-
+  let scene = '(unknown scene)';
   for (let i = 0; i < parsed.length; i++) {
     const item = parsed[i];
-    if (isNoise(item.raw)) {
-      continue;
+    if (!item.match) continue;
+    const { severity, category, label } = item.match;
+    if (category === 'SceneLoad') {
+      scene = item.clean.replace(/^.*?Loaded Scene:\s*/i, '').trim();
+      sceneEvents.push({ time: formatTime(item.time), sceneName: scene,
+        totalSeconds: item.time?.totalSeconds ?? null });
     }
-    const match = matchEvent(item.raw);
-    if (match) {
-      const { severity, category, label } = match;
-      const eventObj = {
-        index: i,
-        time: item.time,
-        severity,
-        category,
-        label,
-        clean: item.clean,
-        raw: item.raw,
-      };
-      rawEvents.push(eventObj);
-
-      if (category === 'SceneLoad' && item.time) {
-        const sceneName = item.clean.replace(/^.*?Loaded Scene:\s*/i, '').trim();
-        sceneEvents.push({
-          time: formatTime(item.time),
-          sceneName,
-          totalSeconds: item.time.totalSeconds,
-        });
-      }
-    }
+    const sourceSeverity = originalSeverity(item.raw) || 'UNKNOWN';
+    const type = eventType(item.raw, item.match);
+    const normalizedMessage = normalizeMessage(item.raw);
+    const groupKey = JSON.stringify([scene, category, normalizedMessage, sourceSeverity, type, severity]);
+    rawEvents.push({ index: i, time: item.time, severity, category, label,
+      clean: item.clean, raw: item.raw, scene, originalSeverity: sourceSeverity,
+      eventType: type, normalizedMessage, groupKey });
   }
 
-  // --- Pass 3: Group repeated events, deduplicate within window ---
   const groups = {};
-  const lastByCat = {};
-
+  const lastByKey = new Map();
   for (const ev of rawEvents) {
-    const { index, time, severity, category, label } = ev;
-
-    if (!groups[category]) {
-      groups[category] = {
-        category,
-        severity: '',
-        label,
-        occurrences: [],
-        times: [],
-        count: 0,
-      };
+    const { index, time, severity, category, groupKey } = ev;
+    if (!groups[groupKey]) groups[groupKey] = {
+      category, severity, label: ev.normalizedMessage, scene: ev.scene,
+      originalSeverity: ev.originalSeverity, eventType: ev.eventType,
+      normalizedMessage: ev.normalizedMessage, occurrences: [], times: [], count: 0,
+      representativeStack: [], detailedCount: 0,
+    };
+    const group = groups[groupKey];
+    const previous = lastByKey.get(groupKey);
+    const deduped = Boolean(time && previous && timeDeltaSeconds(time, previous) <= windowSec
+      && category !== 'SceneLoad' && category !== 'SceneReload');
+    // Keep one complete stack even if the first useful stack belongs to a rapid repeat.
+    const stack = [];
+    let end = index + 1;
+    while (end < parsed.length && (parsed[end].frame || !parsed[end].raw.trim())) {
+      if (parsed[end].frame) stack.push(parsed[end].raw);
+      end++;
     }
-
-    // Deduplicate: same category within windowSec -> skip detailed context
-    if (
-      lastByCat[category] !== undefined &&
-      time &&
-      lastByCat[category]
-    ) {
-      const delta = timeDeltaSeconds(time, lastByCat[category]);
-      if (delta <= windowSec && category !== 'SceneLoad' && category !== 'SceneReload') {
-        groups[category].occurrences.push({
-          time: '',
-          context: [],
-          index,
-          deduped: true,
-        });
-        groups[category].times.push(time);
-        groups[category].count++;
-        lastByCat[category] = time;
-        continue;
+    if (!group.representativeStack.length && stack.length) group.representativeStack = stack;
+    const context = [];
+    const contextAfter = [];
+    const keepDetails = !deduped && group.detailedCount < maxGroup;
+    if (keepDetails) {
+      group.detailedCount++;
+      for (let c = Math.max(0, index - contextLines); c < index; c++) {
+        const p = parsed[c];
+        if (p.clean && !p.frame && !isNoise(p.raw)) context.push(p.clean);
+      }
+      for (let c = end; c < Math.min(parsed.length, end + contextLines); c++) {
+        const p = parsed[c];
+        if (p.clean && !p.frame && !isNoise(p.raw)) contextAfter.push(p.clean);
       }
     }
-
-    // Grab causal context (lines before this event)
-    const ctxStart = Math.max(0, index - contextLines);
-    const ctx = [];
-    for (let c = ctxStart; c < index; c++) {
-      const p = parsed[c];
-      if (p.clean && !isNoise(p.raw) && !matchEvent(p.raw)) {
-        ctx.push(p.clean);
-      }
-    }
-
-    const currentGroupSev = groups[category].severity;
-    const currWeight = SEVERITY_LEVELS[currentGroupSev] || 0;
-    const newWeight = SEVERITY_LEVELS[severity] || 0;
-
-    groups[category].severity = newWeight > currWeight ? severity : currentGroupSev || severity;
-    groups[category].label = label;
-    groups[category].occurrences.push({
-      time: formatTime(time),
-      context: ctx,
-      index,
-      clean: ev.clean,
-      raw: ev.raw,
-      deduped: false,
-    });
-    groups[category].times.push(time);
-    groups[category].count++;
-    lastByCat[category] = time;
+    group.occurrences.push({ time: formatTime(time), index, deduped, detailed: keepDetails,
+      context, contextAfter, ...(keepDetails ? { clean: ev.clean, raw: ev.raw } : {}) });
+    group.times.push(time);
+    group.count++;
+    lastByKey.set(groupKey, time);
   }
 
   // --- Pass 4: Session summary ---
@@ -207,7 +173,7 @@ export function analyzeLog(inputLines, options = {}) {
     }
 
     const hhmm = ev.time ? `${String(ev.time.hours).padStart(2, '0')}:${String(ev.time.minutes).padStart(2, '0')}` : '';
-    const key = `${ev.category}_${hhmm}`;
+    const key = `${ev.groupKey}_${hhmm}`;
 
     if (!seenCatsInWindow.has(key) || ev.category === 'SceneLoad') {
       timeline.push({
@@ -215,6 +181,7 @@ export function analyzeLog(inputLines, options = {}) {
         severity: ev.severity,
         label: ev.label,
         category: ev.category,
+        scene: ev.scene, originalSeverity: ev.originalSeverity, eventType: ev.eventType,
         clean: ev.clean.slice(0, 100),
         raw: ev.raw,
         index: ev.index,

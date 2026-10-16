@@ -7,7 +7,6 @@ import {
   EVENT_PATTERNS,
   NOISE_PATTERNS,
   TIMESTAMP_RE,
-  HTML_TAG_RE,
 } from './constants.js';
 
 /**
@@ -64,7 +63,7 @@ export function parseTime(line) {
  */
 export function cleanLine(line) {
   if (!line) return '';
-  let cleaned = line.replace(HTML_TAG_RE, '');
+  let cleaned = line.replace(/<\/?(?:color|b|i|size|material)(?:=[^>]*)?>/gi, '');
   cleaned = cleaned.replace(TIMESTAMP_RE, '');
   return cleaned.trim();
 }
@@ -89,16 +88,47 @@ export function isNoise(line) {
  */
 export function matchEvent(line) {
   if (!line) return null;
-  for (const item of EVENT_PATTERNS) {
+  // Generic severity markers must not hide subsystem-specific categories.
+  const specific = EVENT_PATTERNS.filter((item) => !['Error', 'Warning', 'Exception'].includes(item.category));
+  for (const item of [...specific, ...EVENT_PATTERNS]) {
     if (item.pattern.test(line)) {
       return {
-        severity: item.severity,
+        severity: originalSeverity(line) || (item.label === 'Object reference not set' ? 'ERROR' : item.severity),
         category: item.category,
         label: item.label,
       };
     }
   }
+  const severity = originalSeverity(line);
+  if (severity && severity !== 'LOG') return { severity, category: 'Error', label: `[${severity}]` };
   return null;
+}
+
+/** A missing marker is unknown, not a Unity severity inferred from the message. */
+export function originalSeverity(line) {
+  const marker = /\[(EXCEPTION|ERROR|WARNING|WARN|LOG|INFO|ASSERT)\]/i.exec(line);
+  if (!marker) return null;
+  return { WARN: 'WARNING', INFO: 'LOG', ASSERT: 'ERROR' }[marker[1].toUpperCase()] || marker[1].toUpperCase();
+}
+
+export function normalizeMessage(line) {
+  return cleanLine(line)
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>')
+    .replace(/\b0x[0-9a-f]+\b/gi, '<hex>')
+    .replace(/(?<![\w])[-+]?\d+(?:\.\d+)?\b/g, '<n>')
+    .replace(/\s+/g, ' ').trim();
+}
+
+export function eventType(line, match) {
+  if (match.category === 'SceneLoad') return 'scene-load';
+  // A logged exception name does not prove it escaped a catch block.
+  if (match.severity === 'EXCEPTION') return 'exception-record';
+  return match.severity === 'ERROR' ? 'logged-error' : 'logged-message';
+}
+
+export function isStackFrame(line) {
+  const body = cleanLine(line);
+  return /^(?:at\s+|--- End of|StackTrace:|[\w.$+`<>]+[.:][\w.$+`<>]+\s*\()/i.test(body);
 }
 
 /**

@@ -18,7 +18,7 @@ self.onmessage = function (e) {
 
       const analysis = analyzeLog(text, options);
 
-      self.postMessage({ type: 'PROGRESS', payload: { percent: 60, stage: 'Extracting causal context and timeline...' } });
+      self.postMessage({ type: 'PROGRESS', payload: { percent: 60, stage: 'Extracting diagnostic evidence and timeline...' } });
 
       const markdown = renderMarkdown(
         filename || 'log.txt',

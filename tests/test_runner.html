@@ -159,8 +159,9 @@
 
       await runTest('Analyzer: Rapid burst clustering', () => {
         const res = analyzeLog(SAMPLE_LOGS.rapidBursts.content, { windowSec: 10 });
-        assertEqual(res.groups.NullRef.count, 10);
-        const distinct = res.groups.NullRef.occurrences.filter(o => !o.deduped);
+        const group = Object.values(res.groups).find(g => g.category === 'NullRef');
+        assertEqual(group.count, 10);
+        const distinct = group.occurrences.filter(o => !o.deduped);
         assertEqual(distinct.length, 1);
       });
 

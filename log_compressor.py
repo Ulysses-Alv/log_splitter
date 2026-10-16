@@ -76,8 +76,8 @@ NOISE_PATTERNS = [
     r'^\s+at System\.',
 ]
 
-TIMESTAMP_RE  = re.compile(r'^(\d{2}:\d{2}:\d{2})\.\d+')
-HTML_TAG_RE   = re.compile(r'<[^>]+>')
+TIMESTAMP_RE  = re.compile(r'^(\d{2}:\d{2}:\d{2})(?:\.(\d+))?')
+HTML_TAG_RE   = re.compile(r'</?(?:color|b|i|size|material)(?:=[^>]*)?>', re.I)
 NOISE_RE      = re.compile('|'.join(NOISE_PATTERNS))
 
 
@@ -87,7 +87,7 @@ def parse_time(line):
     m = TIMESTAMP_RE.match(line)
     if m:
         try:
-            return datetime.strptime(m.group(1), "%H:%M:%S")
+            return datetime.strptime(m.group(1), '%H:%M:%S').replace(microsecond=int((m.group(2) or '0')[:3].ljust(3, '0')) * 1000)
         except ValueError:
             pass
     return None
@@ -101,12 +101,45 @@ def clean_line(line):
 def is_noise(line):
     return bool(NOISE_RE.search(line))
 
+def original_severity(line):
+    marker = re.search(r'\[(EXCEPTION|ERROR|WARNING|WARN|LOG|INFO|ASSERT)\]', line, re.I)
+    if not marker:
+        return None
+    sev = marker[1].upper()
+    return {'WARN': 'WARNING', 'INFO': 'LOG', 'ASSERT': 'ERROR'}.get(sev, sev)
+
+
 def match_event(line):
-    """Return (severity, category, label) for the first matching pattern, or None."""
-    for pattern, severity, category, label in EVENT_PATTERNS:
-        if re.search(pattern, line, re.IGNORECASE):
+    specific = [p for p in EVENT_PATTERNS if p[2] not in ('Error', 'Warning', 'Exception')]
+    for pattern, severity, category, label in specific + EVENT_PATTERNS:
+        if re.search(pattern, line, re.I):
+            severity = original_severity(line) or ('ERROR' if label == 'Object reference not set' else severity)
             return severity, category, label
+    severity = original_severity(line)
+    if severity and severity != 'LOG':
+        return severity, 'Error', f'[{severity}]'
     return None
+
+
+def normalize_message(line):
+    line = clean_line(line)
+    line = re.sub(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', '<id>', line, flags=re.I)
+    line = re.sub(r'\b0x[0-9a-f]+\b', '<hex>', line, flags=re.I)
+    line = re.sub(r'(?<![\w])[-+]?\d+(?:\.\d+)?\b', '<n>', line)
+    return re.sub(r'\s+', ' ', line).strip()
+
+
+def is_stack_frame(line):
+    return bool(re.search(r'^(?:at\s+|--- End of|StackTrace:|[\w.$+`<>]+[.:][\w.$+`<>]+\s*\()', clean_line(line), re.I))
+
+
+def event_type(severity, category):
+    if category == 'SceneLoad':
+        return 'scene-load'
+    if severity == 'EXCEPTION':
+        return 'exception-record'
+    return 'logged-error' if severity == 'ERROR' else 'logged-message'
+
 
 def format_time(dt):
     return dt.strftime("%H:%M:%S") if dt else "??:??:??"
@@ -118,103 +151,94 @@ def plural(n, word):
 # ─── Core analysis ────────────────────────────────────────────────────────────
 
 def analyze(lines, context_lines, max_group, window_sec):
-    """
-    Returns:
-        session      : dict with start/end time, total counts
-        scene_events : list of (time_str, scene_name)
-        grouped      : dict category → {severity, label, occurrences: [(time, context_lines)]}
-        timeline     : list of (time_str, severity, label, first_line_clean)
-    """
+    """Group by scene and normalized message; preserve original severity and evidence.
 
-    # --- Pass 1: parse everything ---
-    parsed = []  # (time|None, raw_line, clean_line)
+    Exception records are NOT evidence that an exception was unhandled.
+    Returns session, scene_events, groups, timeline (same top-level API).
+    """
+    import json
+    parsed = []
     current_time = None
     for raw in lines:
-        t = parse_time(raw)
-        if t:
-            current_time = t
-        parsed.append((current_time, raw.rstrip(), clean_line(raw)))
-
-    # --- Pass 2: collect events ---
-    raw_events   = []  # (index, time, severity, category, label, clean_line)
-    scene_events = []
-
-    for i, (t, raw, clean) in enumerate(parsed):
-        if is_noise(raw):
+        current_time = parse_time(raw) or current_time
+        raw = raw.rstrip('\r\n')
+        frame = is_stack_frame(raw)
+        parsed.append(dict(time=current_time, raw=raw, clean=clean_line(raw), frame=frame,
+                           match=match_event(raw) if not frame and not is_noise(raw) else None))
+    events, scene_events = [], []
+    scene = '(unknown scene)'
+    for i, item in enumerate(parsed):
+        if not item['match']:
             continue
-        result = match_event(raw)
-        if result:
-            sev, cat, label = result
-            raw_events.append((i, t, sev, cat, label, clean))
-            if cat == 'SceneLoad' and t:
-                scene_name = re.sub(r'.*Loaded Scene:\s*', '', clean).strip()
-                scene_events.append((format_time(t), scene_name))
-
-    # --- Pass 3: group repeated events, deduplicate within window ---
-    groups = defaultdict(lambda: {
-        'severity': '',
-        'label': '',
-        'occurrences': [],
-        'times': [],
-    })
-
-    last_by_cat = {}  # category → last time seen
-
-    for i, t, sev, cat, label, clean in raw_events:
-        # Deduplicate: same category within window_sec → skip
-        if cat in last_by_cat and t is not None and last_by_cat[cat] is not None:
-            delta = abs((t - last_by_cat[cat]).total_seconds())
-            if delta <= window_sec and cat not in ('SceneLoad', 'SceneReload'):
-                groups[cat]['occurrences'].append(('', []))  # count but no context
-                groups[cat]['times'].append(t)
-                last_by_cat[cat] = t
-                continue
-
-        # Grab causal context (lines before this event)
-        ctx_start = max(0, i - context_lines)
-        ctx = [
-            p[2] for p in parsed[ctx_start:i]
-            if p[2] and not is_noise(p[1]) and not match_event(p[1])
-        ]
-
-        groups[cat]['severity'] = sev if SEVERITY.get(sev, 0) > SEVERITY.get(groups[cat]['severity'], 0) else groups[cat]['severity']
-        groups[cat]['label']    = label
-        groups[cat]['occurrences'].append((format_time(t), ctx))
-        groups[cat]['times'].append(t)
-        last_by_cat[cat] = t
-
-    # --- Pass 4: session summary ---
-    times_all = [t for _, t, *_ in raw_events if t]
-    counts = Counter(sev for _, _, sev, *_ in raw_events)
-
-    session = {
-        'start':      format_time(times_all[0])  if times_all else 'N/A',
-        'end':        format_time(times_all[-1]) if times_all else 'N/A',
-        'total_lines': len(lines),
-        'exceptions': counts.get('EXCEPTION', 0),
-        'errors':     counts.get('ERROR', 0),
-        'warnings':   counts.get('WARNING', 0),
-        'logs':       counts.get('LOG', 0),
-        'scenes':     len(scene_events),
-    }
-
-    # --- Pass 5: timeline (one entry per scene load + first of each error burst) ---
-    timeline = []
-    seen_cats_in_window = set()
-    window_start = times_all[0] if times_all else None
-
-    for i, t, sev, cat, label, clean in raw_events:
-        if sev == 'LOG' and cat != 'SceneLoad':
+        sev, cat, label = item['match']
+        if cat == 'SceneLoad':
+            scene = re.sub(r'^.*?Loaded Scene:\s*', '', item['clean'], flags=re.I).strip()
+            scene_events.append((format_time(item['time']), scene))
+        source = original_severity(item['raw']) or 'UNKNOWN'
+        kind = event_type(sev, cat)
+        normalized = normalize_message(item['raw'])
+        key = json.dumps([scene, cat, normalized, source, kind, sev], ensure_ascii=False, separators=(',', ':'))
+        events.append(dict(index=i, time=item['time'], severity=sev, category=cat, label=label,
+                           scene=scene, originalSeverity=source, eventType=kind,
+                           normalizedMessage=normalized, groupKey=key, raw=item['raw'], clean=item['clean']))
+    groups, last_by_key = {}, {}
+    for ev in events:
+        key, i, t = ev['groupKey'], ev['index'], ev['time']
+        if key not in groups:
+            groups[key] = dict(category=ev['category'], severity=ev['severity'], label=ev['normalizedMessage'],
+                               scene=ev['scene'], originalSeverity=ev['originalSeverity'], eventType=ev['eventType'],
+                               normalizedMessage=ev['normalizedMessage'], occurrences=[], times=[], count=0,
+                               representativeStack=[], detailedCount=0)
+        group = groups[key]
+        prev = last_by_key.get(key)
+        delta = abs((t - prev).total_seconds()) if t and prev else float('inf')
+        if t and prev and delta > 43200:
+            delta = 86400 - delta
+        deduped = delta <= window_sec and ev['category'] not in ('SceneLoad', 'SceneReload')
+        stack, end = [], i + 1
+        while end < len(parsed) and (parsed[end]['frame'] or not parsed[end]['raw'].strip()):
+            if parsed[end]['frame']:
+                stack.append(parsed[end]['raw'])
+            end += 1
+        if not group['representativeStack'] and stack:
+            group['representativeStack'] = stack
+        detailed = not deduped and group['detailedCount'] < max_group
+        context, after = [], []
+        if detailed:
+            group['detailedCount'] += 1
+            context = [p['clean'] for p in parsed[max(0, i-context_lines):i]
+                       if p['clean'] and not p['frame'] and not is_noise(p['raw'])]
+            after = [p['clean'] for p in parsed[end:end+context_lines]
+                     if p['clean'] and not p['frame'] and not is_noise(p['raw'])]
+        occ = dict(time=format_time(t), index=i, deduped=deduped, detailed=detailed, context=context, contextAfter=after)
+        if detailed:
+            occ.update(clean=ev['clean'], raw=ev['raw'])
+        group['occurrences'].append(occ)
+        group['times'].append(t)
+        group['count'] += 1
+        last_by_key[key] = t
+    times = [ev['time'] for ev in events if ev['time']]
+    counts = Counter(ev['severity'] for ev in events)
+    session = dict(start=format_time(times[0]) if times else 'N/A', end=format_time(times[-1]) if times else 'N/A',
+                   total_lines=len(lines), exceptions=counts['EXCEPTION'], errors=counts['ERROR'],
+                   warnings=counts['WARNING'], logs=counts['LOG'], scenes=len(scene_events))
+    timeline, seen = [], set()
+    window_start = times[0] if times else None
+    for ev in events:
+        t = ev['time']
+        if ev['severity'] == 'LOG' and ev['category'] != 'SceneLoad':
             continue
-        if t and window_start and (t - window_start).total_seconds() > window_sec:
-            seen_cats_in_window.clear()
+        delta = abs((t-window_start).total_seconds()) if t and window_start else 0
+        if delta > 43200:
+            delta = 86400 - delta
+        if delta > window_sec:
+            seen.clear()
             window_start = t
-        key = (cat, t.strftime("%H:%M") if t else '')
-        if key not in seen_cats_in_window or cat == 'SceneLoad':
-            timeline.append((format_time(t), sev, label, clean[:100]))
-            seen_cats_in_window.add(key)
-
-    return session, scene_events, dict(groups), timeline
+        key = (ev['groupKey'], t.strftime('%H:%M') if t else '')
+        if key not in seen or ev['category'] == 'SceneLoad':
+            timeline.append((format_time(t), ev['severity'], ev['label'], ev['clean'][:100], ev['scene']))
+            seen.add(key)
+    return session, scene_events, groups, timeline
 
 
 # ─── Markdown renderer ────────────────────────────────────────────────────────
@@ -270,24 +294,35 @@ def render_md(filename, session, scene_events, groups, timeline, max_group):
         count = len(occ)
 
         # Times for first/last
-        times_with_data = [(ts, ctx) for ts, ctx in occ if ts]
+        times_with_data = [(o['time'], o['context']) for o in occ if o['time']]
         first_ts = times_with_data[0][0]  if times_with_data else 'N/A'
         last_ts  = times_with_data[-1][0] if times_with_data else 'N/A'
         time_range = f"`{first_ts}`" if first_ts == last_ts else f"`{first_ts}` → `{last_ts}`"
 
         W(f"### {icon} {label} — {plural(count, 'occurrence')}")
         W("")
-        W(f"**Category:** `{cat}` | **Severity:** `{sev}` | **When:** {time_range}")
+        W(f"**Category:** `{info['category']}` | **Severity:** `{sev}` | **When:** {time_range}")
+        W(f"**Scene:** {info['scene']} | **Original severity:** `{info['originalSeverity']}` | **Type:** `{info['eventType']}`")
+        if info['representativeStack']:
+            W('**Representative stack trace** (complete captured frame block, not proof of an unhandled exception):')
+            W('````')
+            lines.extend(info['representativeStack'])
+            W('````')
         W("")
 
         # Show up to max_group representative occurrences that have context
         shown = 0
-        for ts, ctx in occ:
-            if not ts:
+        for o in occ:
+            ts, ctx = o['time'], o['context']
+            if not o['detailed']:
                 continue  # deduplicated, no context stored
             if shown >= max_group:
                 W(f"_...and {count - shown} more occurrences (omitted for brevity)_")
                 break
+            W(f"**Event** (`{ts}`, line {o['index'] + 1}):")
+            W('````')
+            W(o.get('raw', o.get('clean', '')))
+            W('````')
             if ctx:
                 W(f"**Context before** (`{ts}`):")
                 W("```")
@@ -296,22 +331,27 @@ def render_md(filename, session, scene_events, groups, timeline, max_group):
                 W("```")
             else:
                 W(f"- `{ts}` _(no distinct context lines)_")
+            if o['contextAfter']:
+                W('**Context after** (temporal proximity, not proven causality):')
+                W('````')
+                lines.extend(o['contextAfter'])
+                W('````')
             shown += 1
 
-        if shown == 0:
-            W(f"_All {count} occurrences were rapid repeats within the deduplication window._")
+        if count > shown:
+            W(f'_{count - shown} occurrences not expanded; totals and first/last times include repeats._')
 
         W("")
 
     # ── Timeline ──
     W("## Event Timeline")
     W("")
-    W("_One entry per scene load + first occurrence of each error type per minute._")
+    W("_Scene loads plus distinct message/scene/type groups per clustering window and minute._")
     W("")
 
-    for ts, sev, label, clean in timeline:
+    for ts, sev, label, clean, scene in timeline:
         icon = sev_icon.get(sev, '⚪')
-        W(f"- `{ts}` {icon} **{label}** — {clean}")
+        W(f"- `{ts}` {icon} [{scene}] **{label}** — {clean}")
 
     W("")
 
@@ -324,7 +364,7 @@ def render_md(filename, session, scene_events, groups, timeline, max_group):
     W("")
     W("```")
     W("The following is a compressed Unity runtime log from a game session.")
-    W("Repeated events are grouped. Context lines show what happened just before each error.")
+    W("Events are grouped by scene and normalized message. Context is temporal evidence, not proof of causality. Exception records do not prove an unhandled exception.")
     W("")
     W("Please:")
     W("1. Identify the most likely root causes for the critical errors.")

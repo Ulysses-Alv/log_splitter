@@ -37,7 +37,32 @@ Deploy directly to GitHub Pages by pushing to `main` (automated GitHub Actions w
 
 ## 🧪 Testing & Parity Verification
 
-A comprehensive test suite is included to guarantee 100% behavioral parity with the reference Python implementations:
+### Diagnostic evidence in reports
+
+Both the web analyzer and `log_compressor.py` group events by **scene, normalized
+message, category, original severity and event type**. Timestamps, numeric values,
+hex addresses and UUIDs are normalized for grouping; raw representative messages
+are retained. Different scene names and state names remain separate.
+
+- **Severity** is the recorded marker when present, otherwise a classification
+  inferred from known patterns. **Original severity: UNKNOWN** means no marker
+  was present; it does not mean Unity emitted an error.
+- **exception-record** identifies exception-formatted output, NOT a proven
+  unhandled exception. Logged errors containing null-reference text stay errors.
+- Each group preserves one complete contiguous stack-frame block, including
+  Unity/System frames. An absent stack means none was captured, not that none exists.
+- Context before/after is bounded by the context-line setting and describes
+  temporal proximity, not causality. `max-group` limits expanded examples, not
+  totals, first/last times or the representative stack.
+
+Grouping keys and Python occurrence records have changed: use each group's
+`category` field rather than indexing `groups.NullRef`; occurrences now expose
+named fields such as `context`, `contextAfter`, `time`, `index` and `detailed`.
+Reports can grow when many genuinely distinct messages occur; repeated evidence
+is limited, but raw input and event metadata are still held in memory.
+
+The test suite checks JavaScript behavior and compares session metrics, grouping,
+occurrence metadata and diagnostic evidence against the Python implementation:
 
 ```bash
 # Run unit tests
